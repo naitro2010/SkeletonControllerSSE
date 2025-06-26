@@ -35,8 +35,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${DETOURS_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PRIVATE ${DETOURS_LIBRARY}) 
 
 if(MSVC)
-        target_compile_options(${PROJECT_NAME} PRIVATE /Zi)
-        target_link_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:RELEASE>:/DEBUG:FULL;/INCREMENTAL:NO;/OPT:REF,ICF>")
+        target_compile_options(${PROJECT_NAME} PRIVATE "/Zi;/WX-")
+        target_link_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:RELEASE>:/DEBUG:FULL;/INCREMENTAL:NO;/WX-;/OPT:REF,ICF>")
 endif()
 
 target_include_directories(${PROJECT_NAME}
