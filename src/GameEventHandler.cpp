@@ -3,8 +3,10 @@
 #include <detours/detours.h>
 #include "include/mutil/mutil.h"
 namespace plugin {
-    void NiNodeUpdateHook(RE::NiAVObject* obj, RE::NiUpdateData& update);
-    void* OriginalUpdatePtr = nullptr;
+    void UpdateClavicle(RE::Actor* obj, float delta); 
+    void* OriginalActorUpdatePtr = nullptr;
+    void* OriginalPlayerUpdatePtr = nullptr;
+    void* OriginalPlayerUpdate3PPtr = nullptr;
     RE::NiAVObject* FindNiObjectName(RE::NiNode* obj, std::string FindName) {
         if (!obj) {
             return nullptr;
@@ -33,10 +35,28 @@ namespace plugin {
             }
         }
     }
-    void NiNodeUpdateHook(RE::NiAVObject* obj, RE::NiUpdateData& update) 
+    void ActorUpdateHook(RE::Actor* obj, float delta) {
+        auto OriginalUpdate = (void (*)(RE::Actor* obj, float delta)) OriginalActorUpdatePtr;
+        OriginalUpdate(obj, delta);
+        UpdateClavicle(obj, delta);
+    }
+    void PlayerUpdateHook(RE::Actor* obj, float delta) {
+        auto OriginalUpdate = (void (*)(RE::Actor* obj, float delta)) OriginalPlayerUpdatePtr;
+        OriginalUpdate(obj, delta);
+        UpdateClavicle(obj, delta);
+    }
+    void PlayerUpdate3PHook(RE::Actor* obj) {
+        auto OriginalUpdate = (void (*)(RE::Actor* obj)) OriginalPlayerUpdate3PPtr;
+        UpdateClavicle(obj, 0.0f);
+        OriginalUpdate(obj);
+        
+    }
+    void UpdateClavicle(RE::Actor* obj, float delta) 
     {
-        auto OriginalUpdate = (void (*)(RE::NiAVObject*, RE::NiUpdateData&)) OriginalUpdatePtr;
-        OriginalUpdate(obj, update);
+
+        if (!obj->Is3DLoaded() || !obj->GetCurrent3D() || !obj->GetCurrent3D()->AsNode()) {
+            return;
+        }
         std::vector<std::string> nodes;
         
         nodes.push_back("NPC Clavicle2.L");
@@ -60,9 +80,11 @@ namespace plugin {
         original_C2R_quat.y = 0.590508;
         original_C2R_quat.z = -0.326944;
         for (int r = 0; r < 2; r++) {
-            if (std::string(obj->name) == nodes[0 + r * 3]) {
-                auto clavicle2 = obj;
-
+            
+                auto clavicle2 = FindNiObjectName(obj->GetCurrent3D()->AsNode(), nodes[0 + r * 3].c_str());
+                if (!clavicle2) {
+                    continue;
+                }
                 auto clavicle2node = clavicle2->AsNode();
                 auto clavicle = FindNiObjectName(clavicle2->parent->AsNode(), nodes[1 + r * 3].c_str());
                 auto upperarm = FindNiObjectName(clavicle2->parent->AsNode(), nodes[2 + r * 3].c_str());
@@ -77,7 +99,7 @@ namespace plugin {
                     original_C2_quat = original_C2R_quat;
                 }
                 RE::NiPoint3 original_C2_vector = upperarm->parent->world * UA_pos - clavicle2->parent->world * C2_pos;
-                RE::NiPoint3 new_C2_vector = upperarm->world.translate - clavicle2->world.translate;
+                RE::NiPoint3 new_C2_vector = (upperarm->world.translate - clavicle2->world.translate);
                 original_C2_vector.Unitize();
                 new_C2_vector.Unitize();
                 auto axis = original_C2_vector.Cross(new_C2_vector);
@@ -103,19 +125,27 @@ namespace plugin {
                 auto x_vecn = vec2vec_rot3.columns[0];
                 auto y_vecn = vec2vec_rot3.columns[1];
                 auto z_vecn = vec2vec_rot3.columns[2];
-                RE::NiMatrix3 vec2vec_matrix3(RE::NiPoint3(x_vecn.x, y_vecn.x, z_vecn.x), RE::NiPoint3(x_vecn.y, y_vecn.y, z_vecn.y),
-                                              RE::NiPoint3(x_vecn.z, y_vecn.z, z_vecn.z));
+                RE::NiMatrix3 vec2vec_matrix3;
+                for (int x = 0; x < 3; x++) {
+                    vec2vec_matrix3.entry[0][x] = vec2vec_rot3.columns[x][0];
+                    vec2vec_matrix3.entry[1][x] = vec2vec_rot3.columns[x][1];
+                    vec2vec_matrix3.entry[2][x] = vec2vec_rot3.columns[x][2];
+                }         
 
                 logger::error("before\n{} {} {}\n{} {} {}\n{} {} {}", b[0][0], b[0][1], b[0][2], b[1][0], b[1][1], b[1][2], b[2][0],
                               b[2][1], b[2][2]);
 
-                clavicle2->world.rotate = original_C2_world_matrix * vec2vec_matrix3;
-                clavicle2->local.rotate = clavicle2->parent->world.rotate.Transpose() * clavicle2->world.rotate;
+                clavicle2->world.rotate = vec2vec_matrix3*original_C2_world_matrix;
+                clavicle2->local.rotate = clavicle2->parent->world.rotate.Transpose() * (vec2vec_matrix3*original_C2_world_matrix);
+
                 auto a = clavicle2->world.rotate.entry;
                 logger::error("after\n{} {} {}\n{} {} {}\n{} {} {}", a[0][0], a[0][1], a[0][2], a[1][0], a[1][1], a[1][2], a[2][0], a[2][1],
                               a[2][2]);
-            }
+                RE::NiUpdateData data{0.0f, RE::NiUpdateData::Flag::kDirty};
+                obj->GetCurrent3D()->Update(data);
+
         }
+        
     }
     
 
@@ -129,15 +159,35 @@ namespace plugin {
     }
 
     void GameEventHandler::onPostPostLoad() {
-        if (OriginalUpdatePtr == nullptr) {
-            DetourTransactionBegin();
-            DetourUpdateThread(GetCurrentThread());
-            uintptr_t* ninode_vtable=(uintptr_t*)RE::VTABLE_NiNode[0].address();
-            OriginalUpdatePtr = (void*) ninode_vtable[0x160 / 8];
+        if (OriginalActorUpdatePtr == nullptr) {
+            {
+                DetourTransactionBegin();
+                DetourUpdateThread(GetCurrentThread());
+                uintptr_t* actor_vtable = (uintptr_t*) RE::VTABLE_Actor[0].address();
+                OriginalActorUpdatePtr = (void*) actor_vtable[0xad];
 
-            DetourAttach(&OriginalUpdatePtr, NiNodeUpdateHook);
-            DetourTransactionCommit();
+                DetourAttach(&OriginalActorUpdatePtr, ActorUpdateHook);
+                DetourTransactionCommit();
+            }
+            {
+                DetourTransactionBegin();
+                DetourUpdateThread(GetCurrentThread());
+                uintptr_t* player_vtable = (uintptr_t*) RE::VTABLE_PlayerCharacter[0].address();
+                OriginalPlayerUpdatePtr = (void*) player_vtable[0xad];
 
+                DetourAttach(&OriginalPlayerUpdatePtr, PlayerUpdateHook);
+                DetourTransactionCommit();
+            }
+            {
+                DetourTransactionBegin();
+                DetourUpdateThread(GetCurrentThread());
+                
+                OriginalPlayerUpdate3PPtr = (void*) REL::RelocationID(39446, 40522).address();
+
+                DetourAttach(&OriginalPlayerUpdate3PPtr, PlayerUpdate3PHook);
+                DetourTransactionCommit();
+            }
+            
 		
         }
         logger::info("onPostPostLoad()");
