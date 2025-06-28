@@ -37,13 +37,15 @@ namespace plugin {
     }
     void ActorUpdateHook(RE::Actor* obj, float delta) {
         auto OriginalUpdate = (void (*)(RE::Actor* obj, float delta)) OriginalActorUpdatePtr;
-        OriginalUpdate(obj, delta);
+        
         UpdateClavicle(obj, delta);
+        OriginalUpdate(obj, delta);
     }
     void PlayerUpdateHook(RE::Actor* obj, float delta) {
         auto OriginalUpdate = (void (*)(RE::Actor* obj, float delta)) OriginalPlayerUpdatePtr;
-        OriginalUpdate(obj, delta);
+        
         UpdateClavicle(obj, delta);
+        OriginalUpdate(obj, delta);
     }
     void PlayerUpdate3PHook(RE::Actor* obj) {
         auto OriginalUpdate = (void (*)(RE::Actor* obj)) OriginalPlayerUpdate3PPtr;
@@ -106,12 +108,14 @@ namespace plugin {
                 auto dot = original_C2_vector.Dot(new_C2_vector);
 
                 mutil::Quaternion vec2vec_quat;
-                vec2vec_quat.x = axis.x;
-                vec2vec_quat.y = axis.y;
-                vec2vec_quat.z = axis.z;
-                vec2vec_quat.w = dot;
-
-                auto original_C2_local_matrix = original_C2_quat.torotation3();
+                if (dot < 0.999999f && dot > -0.999999f) {
+                    vec2vec_quat.x = axis.x;
+                    vec2vec_quat.y = axis.y;
+                    vec2vec_quat.z = axis.z;
+                    vec2vec_quat.w = 1.0 + dot;
+                }
+                
+                auto original_C2_local_matrix = original_C2_quat.normalized().torotation3();
 
                 RE::NiMatrix3 original_C2_world_matrix;
                 for (int x = 0; x < 3; x++) {
@@ -121,7 +125,7 @@ namespace plugin {
                 }
                 auto b = clavicle2->world.rotate.entry;
                 original_C2_world_matrix = shouldernode->world.rotate * original_C2_world_matrix;
-                auto vec2vec_rot3 = vec2vec_quat.torotation3();
+                auto vec2vec_rot3 = vec2vec_quat.normalized().torotation3();
                 auto x_vecn = vec2vec_rot3.columns[0];
                 auto y_vecn = vec2vec_rot3.columns[1];
                 auto z_vecn = vec2vec_rot3.columns[2];
@@ -135,7 +139,7 @@ namespace plugin {
                 logger::error("before\n{} {} {}\n{} {} {}\n{} {} {}", b[0][0], b[0][1], b[0][2], b[1][0], b[1][1], b[1][2], b[2][0],
                               b[2][1], b[2][2]);
 
-                clavicle2->world.rotate = vec2vec_matrix3*original_C2_world_matrix;
+                //clavicle2->world.rotate = vec2vec_matrix3*original_C2_world_matrix;
                 clavicle2->local.rotate = clavicle2->parent->world.rotate.Transpose() * (vec2vec_matrix3*original_C2_world_matrix);
 
                 auto a = clavicle2->world.rotate.entry;
